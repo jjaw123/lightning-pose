@@ -16,6 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts" / "inference-timin
 
 def _load_module(name, filename):
     spec = importlib.util.spec_from_file_location(name, SCRIPTS_DIR / filename)
+    assert spec is not None and spec.loader is not None, f"could not load spec for {filename}"
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
