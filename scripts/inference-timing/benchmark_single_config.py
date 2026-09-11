@@ -54,41 +54,105 @@ CSV_FIELDS = [
 ]
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model_dir", required=True, help="Path to a trained Lightning Pose model directory.")
-    p.add_argument("--model_label", required=True, help="Short label for this model panel, e.g. 'resnet50'. Used as a plotting group and in the output CSV.")
-    p.add_argument("--dataset_dir", default=None, help="Optional dataset dir override (data.data_dir / data.video_dir hydra overrides). Omit to use the model's own config as-is.")
-    p.add_argument("--video_paths", required=True, help="Comma-separated video file path(s) to run prediction on. One path for single-view models; one path per view, in config order, for multiview models.")
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model_dir",
+        required=True,
+        help="Path to a trained Lightning Pose model directory.",
+    )
+    p.add_argument(
+        "--model_label",
+        required=True,
+        help=(
+            "Short label for this model panel, e.g. 'resnet50'. Used as a "
+            "plotting group and in the output CSV."
+        ),
+    )
+    p.add_argument(
+        "--dataset_dir",
+        default=None,
+        help=(
+            "Optional dataset dir override (data.data_dir / data.video_dir hydra "
+            "overrides). Omit to use the model's own config as-is."
+        ),
+    )
+    p.add_argument(
+        "--video_paths",
+        required=True,
+        help=(
+            "Comma-separated video file path(s) to run prediction on. One path "
+            "for single-view models; one path per view, in config order, for "
+            "multiview models."
+        ),
+    )
     p.add_argument("--variant", required=True, choices=VARIANT_CHOICES)
-    p.add_argument("--decoder", required=True, choices=DECODER_CHOICES, help="Video reader/decoder backend passed as the `reader=` kwarg to predict_on_video_file(_multiview).")
-    p.add_argument("--num_repeats", type=int, default=3, help="Number of timed repeats (rows) to record, after warmup.")
-    p.add_argument("--num_warmup", type=int, default=1, help="Number of untimed warmup runs before timed repeats. First-ever run through a fresh export/compile path is often much slower than steady-state, so warmup runs are excluded from the CSV by default unless --keep_warmup_rows is set.")
-    p.add_argument("--keep_warmup_rows", action="store_true", help="Also write warmup runs to the CSV (marked is_warmup=1) instead of discarding them.")
-    p.add_argument("--output_csv", required=True, help="CSV file to append results to. Created with a header if it doesn't exist yet; rows are appended if it does, so re-running a sweep with --skip_existing style bookkeeping in the caller is safe.")
-    p.add_argument("--gpu_label", default=None, help="Label for the GPU this was run on, e.g. 'L4' or 'A100'. If omitted, auto-detected from torch.cuda.get_device_name(0).")
-    p.add_argument("--max_batch_size", type=int, default=8, help="Passed through to model.export() for onnx/tensorrt variants.")
-    p.add_argument("--opt_batch_size", type=int, default=1, help="Passed through to model.export() for onnx/tensorrt variants.")
-    return p.parse_args()
-
-
-def count_frames(video_path):
-    """Auto-detect frame count via OpenCV instead of relying on a hardcoded constant.
-
-    Hardcoding frame counts (as earlier ad-hoc scripts in this project did) is
-    fragile and specific to whatever video happened to be used originally.
-    This makes fps correct for whatever video the caller points at.
-    """
-    import cv2
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"OpenCV could not open video for frame counting: {video_path}")
-    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
-    if n <= 0:
-        raise RuntimeError(f"OpenCV reported a non-positive frame count ({n}) for: {video_path}. The video file may be corrupt or an unsupported container.")
-    return n
+    p.add_argument(
+        "--decoder",
+        required=True,
+        choices=DECODER_CHOICES,
+        help=(
+            "Video reader/decoder backend passed as the `reader=` kwarg to "
+            "predict_on_video_file(_multiview)."
+        ),
+    )
+    p.add_argument(
+        "--num_repeats",
+        type=int,
+        default=3,
+        help="Number of timed repeats (rows) to record, after warmup.",
+    )
+    p.add_argument(
+        "--num_warmup",
+        type=int,
+        default=1,
+        help=(
+            "Number of untimed warmup runs before timed repeats. First-ever run "
+            "through a fresh export/compile path is often much slower than "
+            "steady-state, so warmup runs are excluded from the CSV by default "
+            "unless --keep_warmup_rows is set."
+        ),
+    )
+    p.add_argument(
+        "--keep_warmup_rows",
+        action="store_true",
+        help=(
+            "Also write warmup runs to the CSV (marked is_warmup=1) instead of "
+            "discarding them."
+        ),
+    )
+    p.add_argument(
+        "--output_csv",
+        required=True,
+        help=(
+            "CSV file to append results to. Created with a header if it doesn't "
+            "exist yet; rows are appended if it does, so re-running a sweep "
+            "with --skip_existing style bookkeeping in the caller is safe."
+        ),
+    )
+    p.add_argument(
+        "--gpu_label",
+        default=None,
+        help=(
+            "Label for the GPU this was run on, e.g. 'L4' or 'A100'. If "
+            "omitted, auto-detected from torch.cuda.get_device_name(0)."
+        ),
+    )
+    p.add_argument(
+        "--max_batch_size",
+        type=int,
+        default=8,
+        help="Passed through to model.export() for onnx/tensorrt variants.",
+    )
+    p.add_argument(
+        "--opt_batch_size",
+        type=int,
+        default=1,
+        help="Passed through to model.export() for onnx/tensorrt variants.",
+    )
+    return p.parse_args(argv)
 
 
 def hydra_overrides_for(dataset_dir):
@@ -105,22 +169,46 @@ def build_model(model_dir, variant, dataset_dir, max_batch_size, opt_batch_size)
     overrides = hydra_overrides_for(dataset_dir)
 
     if variant == "eager_fp32":
-        model = Model.from_dir2(model_dir, precision="fp32", runtime="eager", hydra_overrides=overrides)
+        model = Model.from_dir2(
+            model_dir, precision="fp32", runtime="eager", hydra_overrides=overrides
+        )
     elif variant == "eager_fp16":
-        model = Model.from_dir2(model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides)
+        model = Model.from_dir2(
+            model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides
+        )
     elif variant == "compile_fp16":
-        model = Model.from_dir2(model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides)
+        model = Model.from_dir2(
+            model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides
+        )
         model.compile()
     elif variant == "onnx_fp16":
         # export() is safe to call every time: it skips re-exporting if a
         # matching cached export already exists in the model dir.
-        export_model = Model.from_dir2(model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides)
-        export_model.export(runtime="onnx", onnx_precision="fp16", max_batch_size=max_batch_size, opt_batch_size=opt_batch_size)
-        model = Model.from_dir2(model_dir, runtime="onnx", onnx_precision="fp16", hydra_overrides=overrides)
+        export_model = Model.from_dir2(
+            model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides
+        )
+        export_model.export(
+            runtime="onnx",
+            onnx_precision="fp16",
+            max_batch_size=max_batch_size,
+            opt_batch_size=opt_batch_size,
+        )
+        model = Model.from_dir2(
+            model_dir, runtime="onnx", onnx_precision="fp16", hydra_overrides=overrides
+        )
     elif variant == "tensorrt_fp16":
-        export_model = Model.from_dir2(model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides)
-        export_model.export(runtime="tensorrt", onnx_precision="fp16", max_batch_size=max_batch_size, opt_batch_size=opt_batch_size)
-        model = Model.from_dir2(model_dir, runtime="tensorrt", onnx_precision="fp16", hydra_overrides=overrides)
+        export_model = Model.from_dir2(
+            model_dir, precision="fp16", runtime="eager", hydra_overrides=overrides
+        )
+        export_model.export(
+            runtime="tensorrt",
+            onnx_precision="fp16",
+            max_batch_size=max_batch_size,
+            opt_batch_size=opt_batch_size,
+        )
+        model = Model.from_dir2(
+            model_dir, runtime="tensorrt", onnx_precision="fp16", hydra_overrides=overrides
+        )
     else:
         raise ValueError(f"unknown variant: {variant}")
 
@@ -136,14 +224,21 @@ def time_predict_runs(model, video_paths, decoder, multiview, num_repeats, num_w
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         if multiview:
-            model.predict_on_video_file_multiview(video_paths, generate_labeled_video=False, reader=decoder)
+            model.predict_on_video_file_multiview(
+                video_paths, generate_labeled_video=False, reader=decoder
+            )
         else:
-            model.predict_on_video_file(video_file=video_paths[0], generate_labeled_video=False, reader=decoder)
+            model.predict_on_video_file(
+                video_file=video_paths[0], generate_labeled_video=False, reader=decoder
+            )
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - t0
         timings.append((elapsed, is_warmup))
         kind = "warmup" if is_warmup else "timed"
-        print(f"  [{kind} run {run_idx + 1}/{num_warmup + num_repeats}] {elapsed:.2f}s", flush=True)
+        print(
+            f"  [{kind} run {run_idx + 1}/{num_warmup + num_repeats}] {elapsed:.2f}s",
+            flush=True,
+        )
     return timings
 
 
@@ -165,6 +260,11 @@ def write_rows(output_csv, rows):
 
 
 def main():
+    # Imported lazily, and from lightning_pose itself rather than
+    # reimplemented here, so this script can't drift out of sync with the
+    # rest of the repo's frame-counting logic.
+    from lightning_pose.data.utils import count_frames
+
     args = parse_args()
     video_paths = [v.strip() for v in args.video_paths.split(",") if v.strip()]
     if not video_paths:
@@ -172,19 +272,34 @@ def main():
 
     gpu_label = args.gpu_label or detect_gpu_label()
 
-    print(f"=== {args.model_label} | {args.variant} | {args.decoder} | GPU={gpu_label} ===", flush=True)
+    print(
+        f"=== {args.model_label} | {args.variant} | {args.decoder} | GPU={gpu_label} ===",
+        flush=True,
+    )
     print(f"model_dir={args.model_dir}", flush=True)
     print(f"video_paths={video_paths}", flush=True)
 
-    model = build_model(args.model_dir, args.variant, args.dataset_dir, args.max_batch_size, args.opt_batch_size)
+    model = build_model(
+        args.model_dir,
+        args.variant,
+        args.dataset_dir,
+        args.max_batch_size,
+        args.opt_batch_size,
+    )
     multiview = bool(model.config.is_multi_view())
 
     if multiview and len(video_paths) < 2:
-        print(f"WARNING: model reports multiview but only 1 video path was given; using it for all views is NOT what you want. Check --video_paths.", flush=True)
+        print(
+            "WARNING: model reports multiview but only 1 video path was given; "
+            "using it for all views is NOT what you want. Check --video_paths.",
+            flush=True,
+        )
 
     num_frames = count_frames(video_paths[0])
 
-    timings = time_predict_runs(model, video_paths, args.decoder, multiview, args.num_repeats, args.num_warmup)
+    timings = time_predict_runs(
+        model, video_paths, args.decoder, multiview, args.num_repeats, args.num_warmup
+    )
 
     rows = []
     run_idx = 0

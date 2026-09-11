@@ -13,10 +13,11 @@
 # later measurements.
 #
 # Usage:
-#   bash run_benchmark.sh --config path/to/your_config.sh [--dry_run]
+#   bash run_benchmark.sh --config path/to/your_config.yaml [--dry_run]
 #
-# See config.example.sh for the config file format. Copy it outside the repo
-# and edit your copy before running (same convention as scripts/hyper-sweep/).
+# See timing_config.yaml for the config file format. Copy it outside the
+# repo and edit your copy before running (same convention as
+# scripts/hyper-sweep/sweep_config.yaml).
 
 set -uo pipefail  # deliberately NOT `set -e`: see note above per-combo loop
 
@@ -43,8 +44,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$CONFIG" ]]; then
-  echo "Usage: bash run_benchmark.sh --config path/to/your_config.sh [--dry_run]" >&2
-  echo "See config.example.sh for a template." >&2
+  echo "Usage: bash run_benchmark.sh --config path/to/your_config.yaml [--dry_run]" >&2
+  echo "See timing_config.yaml for a template." >&2
   exit 1
 fi
 
@@ -53,12 +54,15 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-# shellcheck source=config.example.sh
-source "$CONFIG"
+# load_config.py parses the YAML config and prints MODEL_PANELS/VARIANTS/
+# DECODERS/etc as shell array/variable assignments for this script to eval.
+# The config file stays YAML (matching scripts/hyper-sweep/sweep_config.yaml)
+# while the orchestration itself stays a plain bash loop.
+eval "$(python3 "$SCRIPT_DIR/load_config.py" --config "$CONFIG")"
 
-: "${MODEL_PANELS?config must set MODEL_PANELS}"
-: "${VARIANTS?config must set VARIANTS}"
-: "${DECODERS?config must set DECODERS}"
+: "${MODEL_PANELS?config must set panels}"
+: "${VARIANTS?config must set sweep.variants}"
+: "${DECODERS?config must set sweep.decoders}"
 : "${NUM_WARMUP:=1}"
 : "${NUM_REPEATS:=3}"
 : "${OUTPUT_DIR:=$HOME/inference_timing_results}"
@@ -73,7 +77,7 @@ mkdir -p "$LOG_DIR"
 if [[ -z "$GPU_LABEL" ]]; then
   GPU_LABEL="$(python3 -c 'import torch; print(torch.cuda.get_device_name(0))' 2>/dev/null)"
   if [[ -z "$GPU_LABEL" ]]; then
-    echo "Could not auto-detect GPU label (is a CUDA GPU visible / is torch installed?). Set GPU_LABEL in your config to override." >&2
+    echo "Could not auto-detect GPU label (is a CUDA GPU visible / is torch installed?). Set output.gpu_label in your config to override." >&2
     exit 1
   fi
 fi

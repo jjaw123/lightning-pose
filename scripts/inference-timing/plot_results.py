@@ -19,6 +19,7 @@ import glob
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -34,12 +35,29 @@ DECODER_COLORS = {
 }
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--input_dir", required=True, help="Directory containing one *.csv per model panel (as written by run_benchmark.sh).")
-    p.add_argument("--output", required=True, help="Output image path, e.g. results/inference_timing.png")
-    p.add_argument("--title", default=None, help="Overall figure title. Defaults to the GPU label(s) found in the data.")
-    return p.parse_args()
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--input_dir",
+        required=True,
+        help=(
+            "Directory containing one *.csv per model panel (as written by "
+            "run_benchmark.sh)."
+        ),
+    )
+    p.add_argument(
+        "--output",
+        required=True,
+        help="Output image path, e.g. results/inference_timing.png",
+    )
+    p.add_argument(
+        "--title",
+        default=None,
+        help="Overall figure title. Defaults to the GPU label(s) found in the data.",
+    )
+    return p.parse_args(argv)
 
 
 def load_panels(input_dir):
@@ -62,7 +80,10 @@ def ordered_variants(present):
 
 def plot_panel(ax, df, label):
     variants = ordered_variants(sorted(df["variant"].unique()))
-    decoders = sorted(df["decoder"].unique(), key=lambda d: list(DECODER_COLORS).index(d) if d in DECODER_COLORS else 99)
+    decoders = sorted(
+        df["decoder"].unique(),
+        key=lambda d: list(DECODER_COLORS).index(d) if d in DECODER_COLORS else 99,
+    )
 
     # mean fps per (variant, decoder), across repeats (is_warmup rows are
     # excluded by benchmark_single_config.py unless --keep_warmup_rows was
@@ -82,10 +103,12 @@ def plot_panel(ax, df, label):
             heights.append(means.get((v, decoder), float("nan")))
         offsets = [xi + (i - (n_decoders - 1) / 2) * bar_width for xi in x]
         color = DECODER_COLORS.get(decoder, None)
-        bars = ax.bar(offsets, heights, width=bar_width, label=decoder, color=color)
-        for xi, h in zip(offsets, heights):
+        ax.bar(offsets, heights, width=bar_width, label=decoder, color=color)
+        for xi, h in zip(offsets, heights, strict=True):
             if h != h:  # NaN check
-                ax.text(xi, 0, "N/A", ha="center", va="bottom", rotation=90, fontsize=7, color="gray")
+                ax.text(
+                    xi, 0, "N/A", ha="center", va="bottom", rotation=90, fontsize=7, color="gray"
+                )
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(variants, rotation=30, ha="right")
@@ -93,8 +116,8 @@ def plot_panel(ax, df, label):
     ax.set_title(label)
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     panels = load_panels(args.input_dir)
     if not panels:
         raise SystemExit(f"No non-empty *.csv files found in {args.input_dir}")
@@ -105,19 +128,27 @@ def main():
     axes = axes[0]
 
     gpu_labels = set()
-    for label, df in panels.items():
+    for _label, df in panels.items():
         if "gpu_label" in df.columns:
             gpu_labels.update(df["gpu_label"].dropna().unique().tolist())
 
-    for ax, label in zip(axes, labels):
+    for ax, label in zip(axes, labels, strict=True):
         plot_panel(ax, panels[label], label)
 
     # Single shared legend for decoder colors.
     handles, legend_labels = axes[-1].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, legend_labels, loc="upper center", ncol=len(legend_labels), bbox_to_anchor=(0.5, 1.05))
+        fig.legend(
+            handles, legend_labels, loc="upper center", ncol=len(legend_labels),
+            bbox_to_anchor=(0.5, 1.05),
+        )
 
-    title = args.title or (f"Inference speed — {', '.join(sorted(gpu_labels))}" if gpu_labels else "Inference speed")
+    if args.title:
+        title = args.title
+    elif gpu_labels:
+        title = f"Inference speed — {', '.join(sorted(gpu_labels))}"
+    else:
+        title = "Inference speed"
     fig.suptitle(title, y=1.1)
     fig.tight_layout()
     fig.savefig(args.output, bbox_inches="tight", dpi=150)

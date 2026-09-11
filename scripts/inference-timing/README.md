@@ -8,10 +8,10 @@ docs figure and for benchmarking your own models/videos on your own
 hardware.
 
 This is the single-GPU sibling of `scripts/hyper-sweep/`: same overall
-shape (a config file you copy and edit, a worker script that does one unit
-of work, an orchestrator script that loops over combinations, a plotting
-script at the end), but built for timing inference on one machine instead of
-launching a hyperparameter sweep across many Lightning jobs.
+shape (a YAML config file you copy and edit, a worker script that does one
+unit of work, an orchestrator script that loops over combinations, a
+plotting script at the end), but built for timing inference on one machine
+instead of launching a hyperparameter sweep across many Lightning jobs.
 
 ## Contents
 
@@ -23,11 +23,16 @@ launching a hyperparameter sweep across many Lightning jobs.
   (model panel x variant x decoder) combination, calling
   `benchmark_single_config.py` as a fresh process each time, then calls
   `plot_results.py` at the end.
-- `config.example.sh` — example config. Copy this outside the repo and edit
-  your copy (same convention as `scripts/hyper-sweep/`).
+- `load_config.py` — parses `timing_config.yaml` and prints the shell
+  variable assignments `run_benchmark.sh` evals to drive its loop.
+- `timing_config.yaml` — example config. Copy this outside the repo and
+  edit your copy (same convention as `scripts/hyper-sweep/sweep_config.yaml`).
 - `plot_results.py` — plotting script (plain `.py`, not a notebook, per
   request). Reads every `*.csv` in a results directory and draws one
   grouped-bar subplot per model panel.
+
+Basic (GPU-free) tests for all of the above live in
+`tests/scripts/inference_timing/`.
 
 ## Setup
 
@@ -35,9 +40,9 @@ You need a working Lightning Pose install with whichever of the following
 you intend to benchmark: `torch.compile` support, ONNX Runtime (with a GPU
 execution provider), TensorRT, NVIDIA DALI, and/or PyNvVideoCodec. You do
 NOT need all of them — just skip the variants/decoders you can't install by
-leaving them out of your config's `VARIANTS`/`DECODERS` arrays. The
-`opencv` decoder choice has no extra GPU-decode dependency and is a useful
-first sanity check.
+leaving them out of your config's `sweep.variants`/`sweep.decoders` lists.
+The `opencv` decoder choice has no extra GPU-decode dependency and is a
+useful first sanity check.
 
 You also need at least one trained Lightning Pose model directory and at
 least one video to run prediction on.
@@ -48,34 +53,33 @@ least one video to run prediction on.
    model(s) and video(s):
 
    ```bash
-   cp scripts/inference-timing/config.example.sh ~/my_inference_config.sh
-   # edit ~/my_inference_config.sh
+   cp scripts/inference-timing/timing_config.yaml ~/my_timing_config.yaml
+   # edit ~/my_timing_config.yaml
    ```
 
-   See the comments in `config.example.sh` for the `MODEL_PANELS` format
-   (one pipe-delimited entry per model/dataset you want a panel for) and
-   for the `VARIANTS`/`DECODERS`/`NUM_REPEATS`/`NUM_WARMUP`/`OUTPUT_DIR`
-   knobs.
+   See the comments in `timing_config.yaml` for the `panels` format (one
+   entry per model/dataset you want a panel for) and for the
+   `sweep`/`timing`/`output`/`export` knobs.
 
 2. Do a dry run first to sanity-check the combinations it's about to run,
    without actually running anything:
 
    ```bash
-   bash scripts/inference-timing/run_benchmark.sh --config ~/my_inference_config.sh --dry_run
+   bash scripts/inference-timing/run_benchmark.sh --config ~/my_timing_config.yaml --dry_run
    ```
 
 3. Run it for real:
 
    ```bash
-   bash scripts/inference-timing/run_benchmark.sh --config ~/my_inference_config.sh
+   bash scripts/inference-timing/run_benchmark.sh --config ~/my_timing_config.yaml
    ```
 
    This writes one CSV per model panel plus a per-combination log file
-   under `OUTPUT_DIR`, then generates `OUTPUT_DIR/inference_timing.png`.
+   under `output.dir`, then generates `output.dir/inference_timing.png`.
 
    The GPU label used in the plot is auto-detected from
-   `torch.cuda.get_device_name(0)` unless you set `GPU_LABEL` in your
-   config.
+   `torch.cuda.get_device_name(0)` unless you set `output.gpu_label` in
+   your config.
 
 4. If you only want to (re)generate the plot from CSVs you already have
    (e.g. after manually re-running one failed combination), you can call
@@ -96,11 +100,16 @@ least one video to run prediction on.
   failure and continues to the next combination rather than aborting the
   whole sweep (it deliberately does not use `set -e` around the per-combo
   loop).
-- **Frame counts are auto-detected**, via OpenCV, from whatever video you
-  point the script at, rather than hardcoded — so this works with any video
-  length, not just the one originally used to produce the published figure.
+- **Config stays YAML, orchestration stays bash.** `load_config.py` is the
+  only piece that knows about `timing_config.yaml`'s schema; it prints
+  shell assignments that `run_benchmark.sh` evals, so the per-combination
+  loop itself doesn't need to change.
+- **Frame counts are auto-detected**, via `lightning_pose.data.utils.count_frames`,
+  from whatever video you point the script at, rather than hardcoded — so
+  this works with any video length, not just the one originally used to
+  produce the published figure.
 - **CSVs are appended to, not overwritten.** Re-running
-  `run_benchmark.sh` against the same `OUTPUT_DIR` adds more rows rather
+  `run_benchmark.sh` against the same `output.dir` adds more rows rather
   than clobbering prior results; if you want a clean run, remove the old
   CSVs first.
 - **The plot adapts to whatever data is present.** It doesn't assume a
